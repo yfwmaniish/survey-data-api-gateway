@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
+import time
 from datetime import datetime
 from typing import Dict, Any
 
@@ -33,6 +34,14 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down Survey Data API Gateway...")
 
+
+# Import additional dependencies for rate limiting
+from collections import defaultdict
+from datetime import datetime, timedelta
+import asyncio
+
+# Simple in-memory rate limiter
+rate_limit_storage = defaultdict(list)
 
 # Create FastAPI app
 app = FastAPI(
@@ -70,6 +79,52 @@ app = FastAPI(
     lifespan=lifespan,
     debug=settings.debug
 )
+
+# Add logging middleware
+@app.middleware("http")
+async def add_logging(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = time.time() - start_time
+    logger.info(f"Request: {request.url}, Method: {request.method}, Duration: {process_time}s, Status code: {response.status_code}")
+    return response
+
+# Add rate limiting middleware
+@app.middleware("http")
+async def add_rate_limiting(request: Request, call_next):
+    client_ip = request.client.host if request.client else "unknown"
+    current_time = datetime.utcnow()
+    
+    # Rate limit: 60 requests per minute
+    rate_limit = 60
+    window_seconds = 60
+    
+    # Clean old requests
+    cutoff_time = current_time - timedelta(seconds=window_seconds)
+    rate_limit_storage[client_ip] = [
+        req_time for req_time in rate_limit_storage[client_ip] 
+        if req_time > cutoff_time
+    ]
+    
+    # Check if rate limit exceeded
+    if len(rate_limit_storage[client_ip]) >= rate_limit:
+        return JSONResponse(
+            status_code=429,
+            content={"error": "Rate limit exceeded", "limit": rate_limit, "window": f"{window_seconds}s"}
+        )
+    
+    # Add current request
+    rate_limit_storage[client_ip].append(current_time)
+    
+    response = await call_next(request)
+    
+    # Add rate limit headers
+    remaining = rate_limit - len(rate_limit_storage[client_ip])
+    response.headers["X-RateLimit-Limit"] = str(rate_limit)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    response.headers["X-RateLimit-Reset"] = str(int((current_time + timedelta(seconds=window_seconds)).timestamp()))
+    
+    return response
 
 # Add CORS middleware
 app.add_middleware(
