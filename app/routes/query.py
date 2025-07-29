@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Response
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -8,6 +8,8 @@ import time
 from app.database import db_manager
 from app.utils.auth import require_query
 from app.utils.query_validator import query_validator
+from app.utils.cache import query_cache
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,7 @@ class QueryError(BaseModel):
 @router.post("/", response_model=QueryResponse)
 async def execute_query(
     request: QueryRequest,
+    response: Response,
     current_user: Dict[str, Any] = Depends(require_query)
 ) -> QueryResponse:
     """
@@ -52,6 +55,7 @@ async def execute_query(
     Returns the query results as JSON along with metadata.
     """
     start_time = time.time()
+    cached = False
     
     try:
         # Log the query attempt
@@ -60,18 +64,49 @@ async def execute_query(
         # Validate the query
         query_validator.validate_query(request.sql)
         
-        # Get query information
-        query_info = query_validator.get_query_info(request.sql)
+        # Check cache first
+        cached_result = query_cache.get(request.sql, request.params, current_user['user_id'])
+        if cached_result:
+            cached = True
+            result_data = cached_result['result']['data']
+            execution_time = 0  # Cache hit
+            query_info = cached_result['result']['query_info']
+            logger.info(f"Cache hit for user {current_user['user_id']}: {request.sql[:50]}...")
+        else:
+            # Get query information
+            query_info = query_validator.get_query_info(request.sql)
+            
+            # Execute the query
+            result_data = db_manager.execute_query(request.sql, request.params)
+            
+            # Calculate execution time
+            execution_time = (time.time() - start_time) * 1000
+            
+            # Cache the result
+            query_response = {
+                'data': result_data,
+                'row_count': len(result_data),
+                'execution_time_ms': round(execution_time, 2),
+                'query_info': query_info
+            }
+            query_cache.set(
+                request.sql, 
+                {'result': query_response}, 
+                request.params, 
+                current_user['user_id'],
+                ttl=settings.cache_ttl
+            )
         
-        # Execute the query
-        result_data = db_manager.execute_query(request.sql, request.params)
-        
-        # Calculate execution time
-        execution_time = (time.time() - start_time) * 1000
+        # Add custom headers
+        response.headers["X-Result-Count"] = str(len(result_data))
+        response.headers["X-Result-Limit"] = str(settings.max_result_rows)
+        response.headers["X-Cache-Hit"] = "true" if cached else "false"
+        response.headers["X-Query-Complexity"] = query_info.get('estimated_complexity', 'unknown')
         
         # Log successful execution
+        cache_status = "(cached)" if cached else f"in {execution_time:.2f}ms"
         logger.info(f"Query executed successfully for user {current_user['user_id']}, "
-                   f"returned {len(result_data)} rows in {execution_time:.2f}ms")
+                   f"returned {len(result_data)} rows {cache_status}")
         
         return QueryResponse(
             data=result_data,

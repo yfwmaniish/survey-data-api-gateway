@@ -11,6 +11,7 @@ from app.config import settings
 from app.database import db_manager
 from app.routes import query, meta, websocket, admin, export
 from app.utils.auth import get_current_user, create_access_token
+from app.utils.cache import query_cache
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -79,6 +80,10 @@ app = FastAPI(
     lifespan=lifespan,
     debug=settings.debug
 )
+
+# Check if caching client initialized correctly
+if query_cache.enabled:
+    logger.info("Query caching is enabled")
 
 # Add logging middleware
 @app.middleware("http")
