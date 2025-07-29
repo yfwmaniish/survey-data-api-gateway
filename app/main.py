@@ -98,7 +98,7 @@ async def root():
         "version": settings.api_version,
         "status": "operational",
         "docs": "/docs",
-        "timestamp": datetime.utcnow()
+        "timestamp": datetime.utcnow().isoformat()
     }
 
 
@@ -115,9 +115,9 @@ async def health_check():
     
     response = {
         "status": status,
-        "timestamp": datetime.utcnow(),
+        "timestamp": datetime.utcnow().isoformat(),
         "services": {
-            "database": "healthy" if db_healthy else "unhealthy",
+            "database": "healthy" if db_healthy else "unhealthy", 
             "api": "healthy"
         }
     }
