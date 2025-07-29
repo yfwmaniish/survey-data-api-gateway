@@ -35,9 +35,10 @@ jobs:
     - name: Security check
       run: |
         python -c "
-        from app.utils.query_validator import query_validator
+        from app.utils.query_validator import QueryValidator
+        validator = QueryValidator()
         try:
-            query_validator.validate_query('DROP TABLE users')
+            validator.validate_query('DROP TABLE users')
             print('❌ Security test failed')
             exit(1)
         except:
