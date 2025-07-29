@@ -18,7 +18,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app/ ./app/
-COPY .env .
+
+# Set default environment variables (can be overridden)
+ENV DATABASE_URL=sqlite:///./survey_data.db
+ENV SECRET_KEY=development-secret-key-change-in-production
+ENV DEBUG=False
 
 # Create non-root user for security
 RUN adduser --disabled-password --gecos '' appuser && \
